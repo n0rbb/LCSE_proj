@@ -7,7 +7,7 @@ entity transmisor is
 		reset, start: in boolean;
          	clk: in std_logic;
 		data: out std_logic;
-		eot: out boolean;
+		eot: out boolean
 	);
 end;
 
