@@ -22,10 +22,6 @@ library IEEE;
 use IEEE.STD_LOGIC_1164.ALL;
 use IEEE.NUMERIC_STD.ALL;
 
--- Uncomment the following library declaration if using
--- arithmetic functions with Signed or Unsigned values
---use IEEE.NUMERIC_STD.ALL;
-
 -- Uncomment the following library declaration if instantiating
 -- any Xilinx leaf cells in this code.
 --library UNISIM;
@@ -43,45 +39,43 @@ end trx;
 architecture Behavioral of trx is
     type estados is (idle, startBit, sendData, stopBit);
     signal current_state, next_state : estados;
-    signal step : std_logic := '0';
-    signal data_count, data_count_flag : natural := 1;
-    signal Pulse_width : std_logic_vector(7 downto 0);
-    signal ns_flag, cs_flag : estados; --Flags para luego
+    signal step : std_logic := '0'; --Flag de llamada al secuencial.
+    signal data_count : natural := 0;
+    signal Pulse_width : unsigned(7 downto 0);
     constant PulseEndOfCount : unsigned(7 downto 0) := to_unsigned(173, 8); --173 en 8 bits, + un ciclo de registro.
     
 begin
-    combinacional : process(current_state, step) --Lógica de transiciones y de salidas. NO SECUENCIAL. Esto se va a ejecutar cada vez que current_state cambie.
+    combinacional : process(step) --Lógica de transiciones y de salidas. NO SECUENCIAL. Esto se va a ejecutar cada vez que current_state cambie.
     begin
             case current_state is
                 when idle =>
                     eot <= '1'; --EOT activo en idle.
                     tx <= '1'; -- Pasamos un 1 porque no hay transmisión.
-                  --  if (start = '1') then
-                    --    ns_flag <= startBit;
-                    --else 
-                     --   ns_flag <= idle;
-                    --end if;
-                    
-                when startBit =>
+                    if (start = '1') then
+                        next_state <= startBit;
+                    else
+                        next_state <= idle;
+                    end if;
+ 
+               when startBit =>
                     eot <= '0'; -- Bajamos EOT.
                     tx <= '0'; -- El primer bit es siempre un 0;
-                    ns_flag <= sendData;
+                    next_state <= sendData;
                     
                 when sendData =>
                     --eot <= '0' -- En teoría no debería cambiar EOT. 
-                    tx <= data(data_count - 1);
-                    if (data_count = 8) then --Téngase en cuenta que aquí ponemos el flag a stopBit, pero queda un ciclo de ejecución antes de asignar al current state porque step activa otra vez esto.
-                        ns_flag <= stopBit;
-                        data_count <= 1;                   
+                    tx <= data(data_count - 2);
+                    if (data_count = 9) then --Téngase en cuenta que aquí ponemos el flag a stopBit, pero queda un ciclo de ejecución antes de asignar al current state porque step activa otra vez esto.
+                        next_state <= stopBit;  
                     else
-                        data_count <= data_count + 1;
+                        next_state <= sendData;              
                     end if;
                    
                 when stopBit =>
                     --data_count <= 1; 
                     tx <= '1'; -- El bit de terminar es un 1
                     eot <= '0';
-                    ns_flag <= idle;
+                    next_state <= idle;
             end case;
             
     end process combinacional;
@@ -89,33 +83,39 @@ begin
     secuencial : process(clk, reset) --El proceso secuencial incrementa los contadores que tenga que incrementar y llama a combinacional.
     begin
         if (reset = '0') then --Reset asíncrono (se puede resetear en estado de reloj). 
-            cs_flag <= idle;
-            
-     
-            
+            current_state <= idle;
+            pulse_width <= "00000000";
+            data_count <= 1;
         else 
-            if CLK'event and CLK = '1' then --Secuencialidad de las transiciones.
-                if (current_state = idle) then --En idle no vamos con la frecuencia de paso de bits, sino con la frecuencia de reloj, así que me da igual el contador pulsewidth.
-                    pulse_width <= (others => '0'); --Simplemente voy a poner pulse_width a 0 continuamente
-                    --current_state <= next_state; --En idle siempre quiero estar alerta a cambiar el estado en cualquier ciclo de reloj. En realidad, creo que al tener un start asíncrono esto me la pela. 
-                  elsif (start = '1') then --Meter en CL
-                        cs_flag <= startBit; 
-                else --El resto de estados deben mantenerse durante el tiempo de bit (174 ciclos de reloj!)
-                       pulse_width <= std_logic_vector(unsigned(pulse_width) + to_unsigned(1, 8));
+            if CLK'event and CLK = '1' then
+                   
+              if (start = '1') then
+                  step <= not step; 
+              end if;
+              
+              if (current_state /= idle and next_state /= idle) then --Los estados no idle deben mantenerse durante el tiempo de bit (174 ciclos de reloj!)
+                    pulse_width <= pulse_width + 1;
+                    if (pulse_width = PulseEndOfCount) then
                     
-                    if (unsigned(pulse_width) = PulseEndOfCount) then
-                        cs_flag <= ns_flag;
-                        step <= not step;
-                        pulse_width <= (others => '0');
+                        if (current_state = sendData and data_count < 9) then --Esta tira se ejecuta en sendData
+                            step <= not step;
+                            data_count <= data_count + 1;
+                            
+                        else
+                            step <= not step; --Esta tira es para StartBit y StopBit
+                            data_count <= 1;
+                            
+                        end if;
+                            
+                       pulse_width <= (others => '0');   
+                
                     end if;
                 end if;
-            next_state <= ns_flag;
-            current_state <= cs_flag; 
+               
+                current_state <= next_state; 
+                  
             end if;
-    end if;
+        end if;      
     end process secuencial;
-    
-   -- next_state <= ns_flag;
-   -- current_state <= cs_flag; 
 
 end Behavioral;
